@@ -78,6 +78,11 @@ const channelRestarts = new Map();
 // 负缓存，把单个模型的问题放大成整池不可用。
 let engineRouteIndex = new Map();
 
+// 上游 wireModel → 引擎声明的档位能力。用于请求日志里还原「有效档位」：
+// 客户端不传 reasoning_effort 时，真正生效的是引擎按模型声明补的默认档，
+// 只看请求体是看不出来的。
+let engineEffortIndex = new Map();
+
 function resolveFromRoot(value) {
   return path.isAbsolute(value) ? value : path.resolve(root, value);
 }
@@ -420,6 +425,7 @@ async function requestChatRoute(route, parsed, signal) {
     const channel = officialChannels.find(item => item.id === route.channelId);
     const credential = await resolveChannelCredential(channel);
     if (!credential) {
+      logUpstreamAttempt(route, parsed, 'no-credential');
       return { kind: 'failure', status: 503, contentType: 'application/json', body: JSON.stringify({
         error: { message: `Channel credential is not configured: ${route.channelId}.`, type: 'invalid_request_error', code: 'channel_credential_missing' },
       }) };
@@ -447,6 +453,7 @@ async function requestChatRoute(route, parsed, signal) {
     });
   } catch (error) {
     if (signal.aborted) return { kind: 'aborted' };
+    logUpstreamAttempt(route, parsed, 'netfail');
     return {
       kind: 'retry',
       failure: { status: 502, contentType: 'application/json', body: JSON.stringify({
@@ -455,6 +462,7 @@ async function requestChatRoute(route, parsed, signal) {
     };
   }
 
+  logUpstreamAttempt(route, parsed, response.status);
   if (!response.ok) {
   const body = await response.text();
   if (route.channelId !== 'workbuddy') {
@@ -773,7 +781,65 @@ function normalizeEngineModels(payload) {
     defaultRealm,
   });
   engineRouteIndex = routeIndex;
+  const effortIndex = new Map();
+  for (const item of payload?.data || []) {
+    const id = String(item?.id || '');
+    if (!id) continue;
+    effortIndex.set(id, {
+      defaultEffort: String(item.reasoning_default_effort || ''),
+      supported: Array.isArray(item.reasoning_supported_efforts) ? item.reasoning_supported_efforts : [],
+      canDisable: item.can_disable_thinking === true,
+    });
+  }
+  engineEffortIndex = effortIndex;
   return models;
+}
+
+// 还原这次请求实际会用的思考档位。三者优先级与人读日志的习惯一致：
+//   客户端显式给了 → 用它（none/disabled 归一成 off）
+//   没给但模型声明了默认档 → 引擎会补上它，这就是真正生效的值，标 (default)
+//   都没有 → -（例如官方渠道模型，档位靠上游自己决定）
+function effectiveEffort(parsed, route) {
+  const thinkingType = parsed?.thinking?.type;
+  if (typeof thinkingType === 'string' && thinkingType.toLowerCase() === 'disabled') {
+    return 'off';
+  }
+  const raw = parsed?.reasoning_effort ?? parsed?.reasoningEffort ?? parsed?.reasoning?.effort;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+    const value = String(raw).trim().toLowerCase();
+    return value === 'none' ? 'off' : value;
+  }
+  const declared = engineEffortIndex.get(route.wireModel || route.model);
+  return declared?.defaultEffort ? `${declared.defaultEffort}(default)` : '-';
+}
+
+// 客户端用了别的写法表达思考开关时，把原样形态带出来，免得日志显示 default
+// 而实际是别的值。正常路径（reasoning_effort / reasoning.effort / thinking.type）
+// 不会触发这里。
+function uninterpretedThinking(parsed) {
+  const thinking = parsed?.thinking;
+  if (thinking && typeof thinking === 'object' && typeof thinking.type === 'string'
+    && thinking.type !== '' && thinking.type.toLowerCase() !== 'disabled') {
+    return `thinking.type=${thinking.type}`;
+  }
+  const reasoning = parsed?.reasoning;
+  if (reasoning && typeof reasoning === 'object' && !('effort' in reasoning)) {
+    return `reasoning{${Object.keys(reasoning).join(',')}}`;
+  }
+  return '';
+}
+
+// 每个上游请求打一行：下游点名了什么 → 实际发去哪个上游模型 → 哪档思考 → 结果。
+// 档位以前只在「发生降级」时才落日志，导致事后无法回答「这次走的是哪档」。
+function logUpstreamAttempt(route, parsed, status) {
+  const stamp = new Date().toTimeString().slice(0, 8);
+  const target = route.wireModel || route.model;
+  const unknown = uninterpretedThinking(parsed);
+  console.log(
+    `[req] ${stamp} | ${parsed?.model ?? '-'} -> ${target} | eff=${effectiveEffort(parsed, route)}`
+    + ` | stream=${parsed?.stream ? '1' : '0'} | status=${status}`
+    + (unknown ? ` | raw=${unknown}` : ''),
+  );
 }
 
 // 能力字段：自定义模型（config.json customModels）是网关级别的别名/组合路由，自身

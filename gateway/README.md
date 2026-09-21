@@ -71,6 +71,48 @@ Console 的「模型路由」区块打开「管理模式」后，可以直接增
 
 模型 ID 只能包含字母、数字、`.`、`_`、`-`、`/`，不能含 `:`，不能以 `@global` 结尾。
 
+## 请求日志
+
+网关对每个上游请求打一行 `[req]`，便于事后核对「这次到底用了哪档思考」：
+
+```text
+[req] 17:46:15 | cn:deepseek-v4.1-flash -> cn:deepseek-v4.1-flash | eff=max | stream=0 | status=200
+```
+
+字段含义：
+
+| 字段 | 说明 |
+|---|---|
+| `A -> B` | 下游点名的模型 → 实际发去上游的 wireModel（不等说明走了一次 failover） |
+| `eff=` | **有效档位**，见下 |
+| `stream=` | 1 流式 / 0 非流式 |
+| `status=` | 上游 HTTP 状态；`netfail` 连不上，`no-credential` 渠道凭据缺失 |
+| `raw=` | 可选。客户端用了不常见的思考写法时原样带出，正常路径不出现 |
+
+`eff=` 的取值分三种来源：
+
+- `low` / `high` / `max` … —— 客户端显式指定
+- `high(default)` —— 客户端没传，引擎按模型声明的 `reasoning_default_effort` 补的。
+  **这个值只看请求体是看不出来的**，必须结合模型能力才知道，所以专门标出来
+- `off` —— 显式关闭（`reasoning_effort: none` 或 `thinking.type=disabled`）
+- `-` —— 渠道没有档位概念（如 Qoder 侧模型，档位由上游自己决定）
+
+一条请求失败重试时会打多行，`status` 各不相同，可以直接看出经历了哪些路由。
+
+排查示例（日志位置取决于启动方式：`npm start` 时在终端里，由 macOS 状态栏壳拉起时在
+`macos/gateway.log`）：
+
+```bash
+# 看最近用过的所有档位
+grep '^\[req\]' gateway.log | tail -50
+
+# 只看用了 max（极致）档的
+grep '^\[req\].*eff=max' gateway.log
+```
+
+> 注意：这里记的是**网关发出去的**档位。`high(default)` 表示客户端没传、
+> 由 engine 按模型声明补齐 —— 实际生效的也是 `high`。
+
 ## 测试
 
 ```bash
