@@ -1,0 +1,17 @@
+{
+  "name": "local-llm-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup-channels.mjs",
+    "setup:engine": "node scripts/setup-channels.mjs --only=engine",
+    "setup:qoder": "node scripts/setup-channels.mjs --only=qoder",
+    "build:engine": "node scripts/build-engine.mjs",
+    "start": "node scripts/start.mjs",
+    "start:no-build": "node scripts/start.mjs --no-build",
+    "sync:dsh": "node scripts/sync-dsh.mjs",
+    "test": "node --test \"gateway/test/*.test.mjs\"",
+    "gen:codex-catalog": "node scripts/gen-codex-catalog.mjs"
+  }
+}

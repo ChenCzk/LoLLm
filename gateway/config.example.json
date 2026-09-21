@@ -1,0 +1,263 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "apiKey": "sk-local-llm-gateway-2026"
+  },
+  "engine": {
+    "baseUrl": "http://127.0.0.1:7863",
+    "command": "channels/workbuddy2api-panel/wb2api",
+    "args": [
+      "--config",
+      "config.local.json"
+    ],
+    "cwd": "channels/workbuddy2api-panel",
+    "apiKey": "local-workbuddy-engine-2026"
+  },
+  "dsh": {
+    "root": "~/.dsh/workbuddy-accounts",
+    "authDir": "channels/workbuddy2api-panel/auths",
+    "watch": true
+  },
+  "channels": [
+    {
+      "id": "glm-official",
+      "type": "openai-chat-completions",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "chatPath": "/chat/completions",
+      "credentialRef": "ZAI_API_KEY",
+      "credentialFile": "~/.dsh/.credentials.yaml",
+      "models": [
+        {
+          "id": "glm-5.3-flash",
+          "object": "model",
+          "owned_by": "zai",
+          "supports_images": true,
+          "context_length": 1000000,
+          "max_output_tokens": 131072,
+          "plan": "coding"
+        }
+      ],
+      "routing": {
+        "prefix": "glm-official",
+        "aliases": [
+          "official"
+        ]
+      }
+    },
+    {
+      "id": "qoder",
+      "type": "openai-chat-completions",
+      "baseUrl": "http://127.0.0.1:8377/v1",
+      "chatPath": "/chat/completions",
+      "apiKey": "sk-qoder-local-2026",
+      "spawn": {
+        "command": ".qoder-src/qodercli2api",
+        "args": [
+          "-addr",
+          "127.0.0.1:8377",
+          "-auth-dir",
+          "{root}/.qoder-auth-cn",
+          "-endpoint",
+          "https://gateway.qoder.com.cn",
+          "-openapi-endpoint",
+          "https://openapi.qoder.com.cn"
+        ],
+        "envKey": "QODER2API_SK",
+        "health": "http://127.0.0.1:8377/health",
+        "ensureLinks": [
+          {
+            "path": ".models",
+            "target": "~/.qoder-cn/.models"
+          }
+        ]
+      },
+      "models": [
+        {
+          "id": "Qwen3.8-Flash",
+          "object": "model",
+          "owned_by": "qoder",
+          "supports_images": true,
+          "context_length": 1000000,
+          "max_output_tokens": 32000,
+          "free": true
+        },
+        {
+          "id": "Qwen3.7-Flash",
+          "object": "model",
+          "owned_by": "qoder",
+          "supports_images": true,
+          "context_length": 1000000,
+          "max_output_tokens": 32000
+        },
+        {
+          "id": "Qwen3.8-Max",
+          "object": "model",
+          "owned_by": "qoder",
+          "supports_images": true,
+          "context_length": 1000000,
+          "max_output_tokens": 32000
+        },
+        {
+          "id": "GLM-5.3-Flash",
+          "object": "model",
+          "owned_by": "qoder",
+          "supports_images": true,
+          "context_length": 1000000,
+          "max_output_tokens": 32000
+        }
+      ],
+      "routing": {
+        "prefix": "qoder",
+        "aliases": [
+          "qd"
+        ]
+      }
+    }
+  ],
+  "routing": {
+    "defaultRealm": "cn",
+    "customModels": [
+      {
+        "id": "qwen3.8-flash",
+        "object": "model",
+        "owned_by": "gateway",
+        "supports_images": true,
+        "failover": true,
+        "displayName": "Qwen 3.8 Flash",
+        "context_length": 1000000,
+        "max_output_tokens": 32000,
+        "routes": [
+          {
+            "channelId": "qoder",
+            "model": "Qwen3.8-Flash"
+          }
+        ]
+      },
+      {
+        "id": "hy4",
+        "object": "model",
+        "owned_by": "gateway",
+        "supports_images": true,
+        "failover": true,
+        "displayName": "Hy4",
+        "context_length": 1000000,
+        "max_output_tokens": 32000,
+        "routes": [
+          {
+            "channelId": "workbuddy",
+            "realm": "cn",
+            "model": "hy4-preview"
+          },
+          {
+            "channelId": "workbuddy",
+            "realm": "global",
+            "model": "hy4-preview-f"
+          }
+        ]
+      },
+      {
+        "id": "glm-5.3-flash",
+        "object": "model",
+        "owned_by": "gateway",
+        "supports_images": true,
+        "failover": true,
+        "displayName": "GLM 5.3 Flash",
+        "context_length": 1000000,
+        "max_output_tokens": 32000,
+        "routes": [
+          {
+            "channelId": "workbuddy",
+            "realm": "cn",
+            "model": "glm-5.3-flash"
+          },
+          {
+            "channelId": "glm-official",
+            "model": "glm-5.3-flash"
+          }
+        ]
+      },
+      {
+        "id": "deepseek-flash",
+        "object": "model",
+        "owned_by": "gateway",
+        "supports_images": true,
+        "failover": true,
+        "displayName": "DeepSeek Flash",
+        "context_length": 1000000,
+        "max_output_tokens": 32000,
+        "routes": [
+          {
+            "channelId": "workbuddy",
+            "realm": "cn",
+            "model": "deepseek-v4.1-flash"
+          },
+          {
+            "channelId": "workbuddy",
+            "realm": "global",
+            "model": "deepseek-v4.1-flash"
+          },
+          {
+            "channelId": "workbuddy",
+            "realm": "global",
+            "model": "deepseek-v4.1-flash-sg"
+          }
+        ]
+      },
+      {
+        "id": "kimi-k3",
+        "object": "model",
+        "owned_by": "gateway",
+        "supports_images": true,
+        "failover": true,
+        "routes": [
+          {
+            "channelId": "workbuddy",
+            "realm": "cn",
+            "model": "kimi-k3-1"
+          },
+          {
+            "channelId": "workbuddy",
+            "realm": "global",
+            "model": "kimi-k3"
+          }
+        ]
+      }
+    ],
+    "staticModels": [
+      {
+        "id": "deepseek-v4.1-flash",
+        "object": "model",
+        "owned_by": "workbuddy",
+        "supports_images": true,
+        "context_length": 1000000,
+        "max_output_tokens": 128000
+      },
+      {
+        "id": "glm-5.3-flash",
+        "object": "model",
+        "owned_by": "workbuddy",
+        "supports_images": true,
+        "context_length": 1000000,
+        "max_output_tokens": 32000
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "object": "model",
+        "owned_by": "workbuddy",
+        "supports_images": true,
+        "context_length": 1000000,
+        "max_output_tokens": 128000
+      },
+      {
+        "id": "global:deepseek-v4.1-flash",
+        "object": "model",
+        "owned_by": "workbuddy-global",
+        "supports_images": true,
+        "context_length": 1000000,
+        "max_output_tokens": 384000
+      }
+    ],
+    "disabledModels": []
+  }
+}

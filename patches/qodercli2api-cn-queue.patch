@@ -1,0 +1,159 @@
+diff --git a/proxy.go b/proxy.go
+index 6944d07..c0ffd14 100644
+--- a/proxy.go
++++ b/proxy.go
+@@ -282,11 +282,97 @@ func retryableStatus(code int) bool {
+ 	return code == 408 || code == 429 || (code >= 500 && code < 600)
+ }
+ 
++// peekQueuedSSE 预读上游 200 响应的首个 SSE 事件，判断它是否为队列/负载错误。
++//
++// CN 版 gateway.qoder.com.cn 的信号形态：
++//
++//	data:{"headers":{...},"body":"{\"code\":\"10605\",\"message\":\"{...retryAfterSeconds:2...}\"}","statusCodeValue":403}
++//
++// 返回 (wake, wait, err)：
++//   - wait > 0    → 命中队列信号，调用方按该时长重试；body 已关闭
++//   - wake != nil → 未命中队列，wake 是「首帧 + 剩余流」的重组 reader
++//   - err != nil  → 读取/解析失败
++func peekQueuedSSE(resp *http.Response) (io.ReadCloser, time.Duration, error) {
++	br := bufio.NewReaderSize(resp.Body, 64*1024)
++	var head bytes.Buffer
++	for {
++		line, err := br.ReadString('\n')
++		head.WriteString(line)
++		if err != nil {
++			return io.NopCloser(io.MultiReader(bytes.NewReader(head.Bytes()), br)), 0, nil
++		}
++		if strings.TrimSpace(line) != "" {
++			continue
++		}
++		break
++	}
++	headBytes := head.Bytes()
++	if wait, queued := queueWait(headBytes); queued {
++		return nil, wait, nil
++	}
++	var env struct {
++		StatusCodeValue int    `json:"statusCodeValue"`
++		Body            string `json:"body"`
++	}
++	if json.Unmarshal([]byte(extractSSEData(headBytes)), &env) == nil && env.StatusCodeValue != 0 && env.StatusCodeValue != 200 {
++		if wait, queued := queueWait([]byte(env.Body)); queued {
++			return nil, wait, nil
++		}
++	}
++	return io.NopCloser(io.MultiReader(bytes.NewReader(headBytes), br)), 0, nil
++}
++
++// extractSSEData 从 SSE 事件块里取出 data: 之后的负载。
++func extractSSEData(chunk []byte) string {
++	var out strings.Builder
++	for _, line := range strings.Split(string(chunk), "\n") {
++		trim := strings.TrimSpace(line)
++		if !strings.HasPrefix(trim, "data:") {
++			continue
++		}
++		d := strings.TrimSpace(strings.TrimPrefix(trim, "data:"))
++		if d == "" {
++			continue
++		}
++		if out.Len() > 0 {
++			out.WriteByte('\n')
++		}
++		out.WriteString(d)
++	}
++	return out.String()
++}
++
++// nestedRetryAfterMs 从内层 message 里提取 retryAfterSeconds / waitTime（毫秒）。
++func nestedRetryAfterMs(message string) int64 {
++	if message == "" {
++		return 0
++	}
++	var inner struct {
++		RetryAfterSeconds int64 `json:"retryAfterSeconds"`
++		RetryAfterMs      int64 `json:"retryAfterMs"`
++		WaitTime          int64 `json:"waitTime"`
++	}
++	if json.Unmarshal([]byte(message), &inner) != nil {
++		return 0
++	}
++	if inner.RetryAfterSeconds > 0 {
++		return inner.RetryAfterSeconds * 1000
++	}
++	if inner.RetryAfterMs > 0 {
++		return inner.RetryAfterMs
++	}
++	if inner.WaitTime > 0 {
++		return inner.WaitTime
++	}
++	return 0
++}
++
+ // queueWait extracts server-provided wait time from a queued/overload body.
+ // Upstream signals queueing with {"code":"10605",...} or {"queue":{"isQueued":true,"waitTime":ms}}.
+ func queueWait(body []byte) (time.Duration, bool) {
+ 	var parsed struct {
+ 		Code         string `json:"code"`
++		Message      string `json:"message"`
+ 		RetryAfterMs int64  `json:"retryAfterMs"`
+ 		Queue        *struct {
+ 			IsQueued bool  `json:"isQueued"`
+@@ -313,6 +399,15 @@ func queueWait(body []byte) (time.Duration, bool) {
+ 		}
+ 		return time.Duration(ms) * time.Millisecond, true
+ 	}
++	// CN 上游把真实信号塞在 message 字段里（二次转义的 JSON 字符串）：
++	//   {"code":"10605","message":"{\"isQueued\":false,\"retryAfterSeconds\":2,...}"}
++	// 只匹配外层 code 会漏掉这种形态，必须下沉一层再解析。
++	if strings.Contains(string(body), "10605") {
++		if ms := nestedRetryAfterMs(parsed.Message); ms > 0 {
++			return time.Duration(ms) * time.Millisecond, true
++		}
++		return 2 * time.Second, true
++	}
+ 	return 0, false
+ }
+ 
+@@ -360,6 +455,40 @@ func (s *server) callUpstream(ctx context.Context, body []byte, mc *modelConfig,
+ 			return nil, err
+ 		}
+ 		if resp.StatusCode == 200 {
++			// CN 上游把队列/负载错误藏在 HTTP 200 的 SSE 首帧里
++			// （data:{"statusCodeValue":403,"body":"{\"code\":\"10605\",...}"}）。
++			// 旧实现直接返回 200，重试逻辑完全绕过，下游只看到一个 502。
++			// 这里预读首帧，命中队列信号就按 retryAfterSeconds 重试。
++			wake, queuedWait, perr := peekQueuedSSE(resp)
++			if perr != nil {
++				resp.Body.Close()
++				if attempt < maxAttempts {
++					s.logf("req %s SSE peek error (attempt %d/%d): %v", rid, attempt, maxAttempts, perr)
++					if !sleepCtx(ctx, time.Duration(attempt)*time.Second) {
++						return nil, ctx.Err()
++					}
++					continue
++				}
++				return nil, perr
++			}
++			if queuedWait > 0 {
++				resp.Body.Close()
++				if attempt >= maxAttempts {
++					s.logf("req %s upstream queued, attempts exhausted (waited %v)", rid, queuedWait)
++					return errorResponse(resp, []byte(`{"code":"10605","message":"model busy"}`)), nil
++				}
++				if queuedWait > 30*time.Second {
++					queuedWait = 30 * time.Second
++				}
++				s.logf("req %s upstream queued (attempt %d/%d), retry in %v", rid, attempt, maxAttempts, queuedWait)
++				if !sleepCtx(ctx, queuedWait) {
++					return nil, ctx.Err()
++				}
++				continue
++			}
++			if wake != nil {
++				resp.Body = wake
++			}
+ 			return resp, nil
+ 		}
+ 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))

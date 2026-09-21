@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Local LLM Gateway 控制台</title>
+  <link rel="stylesheet" href="/console/console.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <div>
+        <h1>Local LLM Gateway</h1>
+        <p class="subtitle">总控面板</p>
+      </div>
+      <div class="topbar-actions">
+        <span id="connectionState" class="state-chip pending">未连接</span>
+        <button id="refreshButton" class="ghost-button" type="button">刷新</button>
+        <a class="ghost-button" href="/panel/" aria-label="打开 WorkBuddy 工作台">WorkBuddy 工作台</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="authPanel" class="surface auth-panel" hidden>
+      <label for="apiKeyInput">网关 API Key</label>
+      <div class="key-row">
+        <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk-local-llm-gateway-...">
+        <button id="saveKeyButton" type="button">连接</button>
+      </div>
+      <p id="authError" class="error-text" hidden></p>
+    </section>
+
+    <div id="dashboard" hidden>
+      <section class="metric-grid" aria-label="网关状态">
+        <article class="surface metric">
+          <span class="metric-label">网关</span>
+          <strong id="gatewayVersion">-</strong>
+          <span id="gatewayHealth" class="metric-detail">-</span>
+        </article>
+        <article class="surface metric">
+          <span class="metric-label">可用模型</span>
+          <strong id="modelCount">-</strong>
+          <span class="metric-detail">OpenAI Compatible</span>
+        </article>
+        <article class="surface metric">
+          <span class="metric-label">账号池</span>
+          <strong id="accountTotal">-</strong>
+          <span id="accountHealth" class="metric-detail">-</span>
+        </article>
+        <article class="surface metric">
+          <span class="metric-label">DSH 凭据</span>
+          <strong id="dshTotal">-</strong>
+          <span id="dshState" class="metric-detail">-</span>
+        </article>
+      </section>
+
+      <section class="surface">
+        <div class="section-heading">
+          <div>
+            <h2>Channel</h2>
+            <p id="engineHealthText">-</p>
+          </div>
+          <button id="syncButton" class="primary-button" type="button">同步 DSH</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>适配器</th>
+                <th>范围</th>
+                <th>健康</th>
+                <th>冷却</th>
+                <th>禁用</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="channelBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="modelRouting" class="surface">
+        <div class="section-heading model-heading">
+          <div>
+            <h2>模型路由</h2>
+            <p id="modelSummaryText">-</p>
+          </div>
+          <div class="model-actions">
+            <label class="toggle">
+              <input id="showAllModelsToggle" type="checkbox">
+              <span>显示全部对外模型</span>
+            </label>
+            <label class="toggle">
+              <input id="manageModelsToggle" type="checkbox">
+              <span>管理模式</span>
+            </label>
+            <input id="modelSearch" type="search" placeholder="搜索模型" autocomplete="off">
+            <button id="newModelButton" class="primary-button" type="button">新建模型</button>
+          </div>
+        </div>
+        <div class="table-wrap model-table">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>内部路由（按顺序故障转移）</th>
+                <th>上下文</th>
+                <th>最大输出</th>
+                <th>来源</th>
+                <th id="modelActionHead" hidden>操作</th>
+              </tr>
+            </thead>
+            <tbody id="modelBody"></tbody>
+          </table>
+        </div>
+        <p class="muted-text hint-text">裸模型名按列表顺序做故障转移；<span class="model-code">cn:</span> / <span class="model-code">global:</span> / <span class="model-code">官方前缀:</span> 前缀会固定到对应渠道。</p>
+      </section>
+
+      <section class="surface">
+        <div class="section-heading">
+          <h2>DSH 账号映射</h2>
+          <span id="dshUpdatedText" class="muted-text">-</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>账号</th>
+                <th>范围</th>
+                <th>UID</th>
+                <th>过期时间</th>
+                <th>来源</th>
+              </tr>
+            </thead>
+            <tbody id="dshBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="surface">
+        <div class="section-heading">
+          <h2>Token 用量</h2>
+          <span id="usageGeneratedText" class="muted-text">-</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>来源</th>
+                <th>请求</th>
+                <th>失败</th>
+                <th>Prompt</th>
+                <th>Completion</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody id="usageBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <div id="modelModal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modelModalTitle">
+      <header class="modal-head">
+        <div>
+          <h2 id="modelModalTitle">新建模型</h2>
+          <p id="modelModalHint" class="muted-text">对外暴露一个模型 ID，可以挂多条内部路由。</p>
+        </div>
+        <button class="ghost-button icon-button" type="button" data-close-modal aria-label="关闭">✕</button>
+      </header>
+      <div class="modal-body">
+        <div class="form-grid">
+          <label class="field">
+            <span>模型 ID <b class="required">*</b></span>
+            <input id="modelIdInput" type="text" autocomplete="off" placeholder="例如 my-model">
+          </label>
+          <label class="field">
+            <span>显示名称</span>
+            <input id="modelNameInput" type="text" autocomplete="off" placeholder="可选">
+          </label>
+          <label class="field">
+            <span>上下文长度</span>
+            <input id="modelContextInput" type="number" min="1" step="1" placeholder="可选，例如 1000000">
+          </label>
+          <label class="field">
+            <span>最大输出</span>
+            <input id="modelMaxOutputInput" type="number" min="1" step="1" placeholder="可选，例如 32000">
+          </label>
+        </div>
+
+        <div class="switch-row">
+          <label class="toggle">
+            <input id="modelImagesInput" type="checkbox" checked>
+            <span>支持图片</span>
+          </label>
+          <label class="toggle">
+            <input id="modelFailoverInput" type="checkbox" checked>
+            <span>按顺序故障转移</span>
+          </label>
+        </div>
+
+        <div class="route-heading">
+          <div>
+            <h3>内部路由</h3>
+            <p class="muted-text">按顺序尝试：WorkBuddy CN、WorkBuddy Global、官方直连可以混选。</p>
+          </div>
+          <button id="addRouteButton" class="ghost-button" type="button">添加路由</button>
+        </div>
+        <div id="routeList" class="route-list"></div>
+        <p id="modelFormError" class="error-text" hidden></p>
+      </div>
+      <footer class="modal-foot">
+        <button class="ghost-button" type="button" data-close-modal>取消</button>
+        <button id="saveModelButton" class="primary-button" type="button">保存</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/console/console.js"></script>
+</body>
+</html>

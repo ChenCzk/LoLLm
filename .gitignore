@@ -1,0 +1,45 @@
+# ── 凭据与运行时数据：绝不入库 ──────────────────────────────
+# 网关本机配置（含本机 API Key、渠道凭据指向）
+gateway/config.json
+gateway/data/
+
+# WorkBuddy 账号池（每个文件是一个真实账号的 accessToken / refreshToken）
+channels/workbuddy2api-panel/auths/
+channels/workbuddy2api-panel/data/
+channels/workbuddy2api-panel/config.local.json
+
+# Qoder 凭据（user + machine_id 成对即可解密）、调试转储
+.qoder-auth/
+.qoder-auth-cn/
+.qoder-dump/
+
+# 指向 Qoder CLI 模型缓存的链接（含本机 uid，由网关启动时自动建立）
+.models
+
+# ── 第三方渠道：由 npm run setup 按 commit 拉取 ─────────────
+# 各自有独立的上游仓库与许可证，本仓库只保存来源与补丁，不复制它们的代码
+channels/workbuddy2api-panel/
+.qoder-src/
+
+# ── 生成的产物 ────────────────────────────────────────────
+gateway/codex-model-catalog.json
+*.log
+
+# ── 仅本机使用的东西 ──────────────────────────────────────
+# 助手的工作记忆，不属于项目产物
+.workbuddy/
+# macOS 状态栏壳：本仓库只做网页版，这个目录保留在本地不发布
+macos/
+# 内部交付文档（含本机 key 与账号细节）
+总控AI看板-完整交付手册.md
+本地大模型网关需求文档.md
+# DSH 会话导出
+dsh-session-session-*/
+
+# ── 常规 ──────────────────────────────────────────────────
+.DS_Store
+.gocache/
+node_modules/
+*.bak
+*.bak-*
+*.tmp
