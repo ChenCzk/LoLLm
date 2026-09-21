@@ -64,6 +64,8 @@ Console 的「模型路由」区块打开「管理模式」后，可以直接增
 ### 管理接口
 
 - `GET /admin/models`：自定义模型列表、`disabledModels`、`hiddenModels`
+- `GET /admin/requests`：最近 200 次上游请求（时间、下游模型、实际路由、有效档位、流式、状态）。
+  只存内存、重启清空。`?limit=N` 可调返回条数。控制台「最近请求」区块用的就是它
 - `GET /admin/catalog`：WorkBuddy CN/Global 与官方渠道的可选模型
 - `POST /admin/models`：新建或编辑，body 为模型对象；重命名时带 `previousId`
 - `DELETE /admin/models/:id`：自定义模型删除；内置模型隐藏
@@ -112,6 +114,9 @@ grep '^\[req\].*eff=max' gateway.log
 
 > 注意：这里记的是**网关发出去的**档位。`high(default)` 表示客户端没传、
 > 由 engine 按模型声明补齐 —— 实际生效的也是 `high`。
+>
+> 控制台 `/console/` 的「最近请求」区块是同一份数据的网页视图，
+> 带「只看显式指定档位的」筛选，用来回答「刚才那次到底选了哪档」。见 `/admin/requests`。
 
 ## 测试
 

@@ -83,6 +83,11 @@ let engineRouteIndex = new Map();
 // 只看请求体是看不出来的。
 let engineEffortIndex = new Map();
 
+// 最近请求的环形缓冲，供控制台「最近请求」区块查看（GET /admin/requests）。
+// 只留内存、不上盘：这是排障用的实时视图，重启即清空，不涉及隐私留存。
+const RECENT_REQUEST_LIMIT = 200;
+const recentRequests = [];
+
 function resolveFromRoot(value) {
   return path.isAbsolute(value) ? value : path.resolve(root, value);
 }
@@ -834,12 +839,26 @@ function uninterpretedThinking(parsed) {
 function logUpstreamAttempt(route, parsed, status) {
   const stamp = new Date().toTimeString().slice(0, 8);
   const target = route.wireModel || route.model;
+  const effort = effectiveEffort(parsed, route);
   const unknown = uninterpretedThinking(parsed);
   console.log(
-    `[req] ${stamp} | ${parsed?.model ?? '-'} -> ${target} | eff=${effectiveEffort(parsed, route)}`
+    `[req] ${stamp} | ${parsed?.model ?? '-'} -> ${target} | eff=${effort}`
     + ` | stream=${parsed?.stream ? '1' : '0'} | status=${status}`
     + (unknown ? ` | raw=${unknown}` : ''),
   );
+  recentRequests.push({
+    at: Date.now(),
+    model: String(parsed?.model ?? ''),
+    target,
+    channelId: route.channelId,
+    effort,
+    stream: Boolean(parsed?.stream),
+    status: String(status),
+    raw: unknown,
+  });
+  if (recentRequests.length > RECENT_REQUEST_LIMIT) {
+    recentRequests.splice(0, recentRequests.length - RECENT_REQUEST_LIMIT);
+  }
 }
 
 // 能力字段：自定义模型（config.json customModels）是网关级别的别名/组合路由，自身
@@ -1221,6 +1240,18 @@ async function handleRequest(req, res) {
     } catch (error) {
       sendError(res, 500, error.message);
     }
+    return;
+  }
+
+  if (pathname === '/admin/requests' && req.method === 'GET') {
+    // 倒序返回（最新在前）供控制台直接渲染；limit 可调，默认 80。
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 80, 1), RECENT_REQUEST_LIMIT);
+    sendJson(res, 200, {
+      object: 'list',
+      total: recentRequests.length,
+      limit: RECENT_REQUEST_LIMIT,
+      data: recentRequests.slice(-limit).reverse(),
+    });
     return;
   }
 

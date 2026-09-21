@@ -119,6 +119,41 @@
 
       <section class="surface">
         <div class="section-heading">
+          <div>
+            <h2>最近请求</h2>
+            <p id="requestSummaryText" class="muted-text">-</p>
+          </div>
+          <div class="model-actions">
+            <label class="toggle">
+              <input id="requestEffortOnlyToggle" type="checkbox">
+              <span>只看显式指定档位的</span>
+            </label>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>下游模型</th>
+                <th>实际路由</th>
+                <th>思考档位</th>
+                <th>流式</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="requestBody"></tbody>
+          </table>
+        </div>
+        <p class="muted-text hint-text">
+          只保留最近 200 次、仅内存，重启清空。
+          <span class="model-code">high(default)</span> 表示客户端没传档位，由引擎按模型声明的默认档补齐 ——
+          实际生效的就是它。
+        </p>
+      </section>
+
+      <section class="surface">
+        <div class="section-heading">
           <h2>DSH 账号映射</h2>
           <span id="dshUpdatedText" class="muted-text">-</span>
         </div>

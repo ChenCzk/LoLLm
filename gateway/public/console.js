@@ -53,6 +53,9 @@ const elements = {
   addRouteButton: document.getElementById('addRouteButton'),
   modelFormError: document.getElementById('modelFormError'),
   saveModelButton: document.getElementById('saveModelButton'),
+  requestBody: document.getElementById('requestBody'),
+  requestSummaryText: document.getElementById('requestSummaryText'),
+  requestEffortOnlyToggle: document.getElementById('requestEffortOnlyToggle'),
   toast: document.getElementById('toast'),
 };
 
@@ -63,6 +66,7 @@ let customModelIds = new Set();
 let hiddenModelIds = new Set();
 let catalog;
 let editingModelId = '';
+let lastRequests = [];
 let manageMode = false;
 // 默认只列自定义对外模型；勾选开关后才展开内置模型，避免 58 个内置模型刷屏。
 let showAllModels = false;
@@ -236,6 +240,54 @@ function renderUsage(usage) {
       <td>${formatNumber(stats.promptTokens)}</td>
       <td>${formatNumber(stats.completionTokens)}</td>
       <td>${formatNumber(stats.totalTokens)}</td>
+    </tr>`).join('');
+}
+
+function formatClock(ms) {
+  return new Date(ms).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+// 档位标签的三种形态要能一眼区分，否则「没传，引擎补了 high」会被误读成
+// 「客户端指定了 high」——这两件事的排查方向完全不同。
+function effortChip(effort) {
+  const value = String(effort || '-');
+  if (value === '-') return '<span class="muted-text">—</span>';
+  if (value.endsWith('(default)')) {
+    const base = value.slice(0, -'(default)'.length);
+    return `<span class="state-chip pending">${escapeHtml(base)} · 默认</span>`;
+  }
+  return `<span class="state-chip ready">${escapeHtml(value)}</span>`;
+}
+
+function statusChip(status) {
+  const value = String(status || '-');
+  const cls = value === '200' ? 'ready' : (value === 'netfail' || value === 'no-credential' ? 'error' : 'warn');
+  return `<span class="state-chip ${cls}">${escapeHtml(value)}</span>`;
+}
+
+function renderRequests(payload) {
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  lastRequests = rows;
+  const explicitOnly = elements.requestEffortOnlyToggle.checked;
+  // 「显式指定」= 不是引擎补的默认档，也不是「该渠道无档位概念」。off 也算显式。
+  const filtered = explicitOnly ? rows.filter(row => !row.effort.endsWith('(default)') && row.effort !== '-') : rows;
+  const maxCount = lastRequests.filter(row => row.effort === 'max').length;
+  elements.requestSummaryText.textContent = rows.length
+    ? `显示 ${filtered.length} / 最近 ${rows.length} 条 · 其中 ${maxCount} 条用了 max（极致）`
+    : '暂无请求';
+
+  if (!filtered.length) {
+    emptyRow(elements.requestBody, 6, rows.length ? '没有显式指定档位的请求' : '还没有请求经过网关');
+    return;
+  }
+  elements.requestBody.innerHTML = filtered.map(row => `
+    <tr>
+      <td class="model-code">${escapeHtml(formatClock(row.at))}</td>
+      <td class="model-code">${escapeHtml(row.model || '-')}</td>
+      <td class="model-code">${escapeHtml(row.target || '-')}</td>
+      <td>${effortChip(row.effort)}</td>
+      <td>${row.stream ? '是' : '否'}</td>
+      <td>${statusChip(row.status)}</td>
     </tr>`).join('');
 }
 
@@ -509,6 +561,7 @@ async function loadAll() {
   try {
     const status = await request('/admin/status');
     const usage = await request('/admin/usage');
+    const requests = await request('/admin/requests?limit=80');
     const modelPayload = await request('/v1/models');
     const adminPayload = await request('/admin/models');
     const visibleModels = Array.isArray(modelPayload.data) ? modelPayload.data : [];
@@ -523,6 +576,7 @@ async function loadAll() {
     setConnectionState('ready', '已连接');
     renderStatus(status);
     renderUsage(usage);
+    renderRequests(requests);
     renderModels();
     scheduleRefresh();
   } catch (error) {
@@ -587,6 +641,11 @@ elements.manageModelsToggle.addEventListener('change', () => {
 elements.showAllModelsToggle.addEventListener('change', () => {
   showAllModels = elements.showAllModelsToggle.checked;
   renderModels();
+});
+
+// 只重渲染已有数据，不必为一个筛选再打一次接口。
+elements.requestEffortOnlyToggle.addEventListener('change', () => {
+  renderRequests({ data: lastRequests });
 });
 
 elements.newModelButton.addEventListener('click', () => openModelModal(null));
