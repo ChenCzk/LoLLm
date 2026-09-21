@@ -70,6 +70,25 @@ async function ensureSource(spec) {
   await run('git', ['-C', spec.dir, 'checkout', spec.commit]);
 }
 
+// 与网关一致：优先 config.json，没有再退回模板。确保 engine 拿到的 listen/api_key
+// 跟网关实际使用的完全一致。
+async function gatewayConfig() {
+  for (const name of ['config.json', 'config.example.json']) {
+    const target = path.join(root, 'gateway', name);
+    if (await exists(target)) return JSON.parse(await readFile(target, 'utf8'));
+  }
+  throw new Error('找不到 gateway/config.json 或 config.example.json');
+}
+
+async function ensureGatewayConfig() {
+  const configPath = path.join(root, 'gateway', 'config.json');
+  if (await exists(configPath)) return;
+  const example = await readFile(path.join(root, 'gateway', 'config.example.json'), 'utf8');
+  JSON.parse(example);
+  await writeFile(configPath, example, { mode: 0o600 });
+  console.log('[setup] 已从 config.example.json 生成 gateway/config.json，请按需修改凭据');
+}
+
 async function setupEngine() {
   await ensureSource(ENGINE);
   await mkdir(path.join(ENGINE.dir, 'auths'), { recursive: true });
@@ -77,6 +96,22 @@ async function setupEngine() {
   console.log('[setup] 编译 engine...');
   await buildEngine();
   console.log(`[setup] engine 就绪：${engineBinary()}`);
+
+  // engine 缺 config.local.json 时会自己生成一份、并用随机 api_key + 绑 0.0.0.0。
+  // 网关启动时会用 WB2A_LISTEN / WB2A_API_KEY 覆盖这两项，但那份随机值仍会显示在
+  // 工作台「配置」页里造成困惑，所以这里按 gateway 配置先落一份自洽的。
+  const engineConfigPath = path.join(ENGINE.dir, 'config.local.json');
+  if (await exists(engineConfigPath)) {
+    console.log('[setup] engine config.local.json 已存在，保留不动');
+    return;
+  }
+  const cfg = await gatewayConfig();
+  await writeFile(engineConfigPath, `${JSON.stringify({
+    listen: new URL(cfg.engine.baseUrl).host,
+    api_key: cfg.engine.apiKey,
+    auth_dir: './auths',
+  }, null, 2)}\n`, { mode: 0o600 });
+  console.log('[setup] 已生成 engine config.local.json（listen 与 api_key 跟 gateway/config.json 对齐）');
 }
 
 async function setupQoder() {
@@ -128,16 +163,9 @@ async function setupQoder() {
 async function main() {
   const only = process.argv.find(arg => arg.startsWith('--only='))?.slice('--only='.length);
   console.log(`[setup] 平台 ${process.platform}，项目根 ${root}`);
+  await ensureGatewayConfig();
   if (!only || only === 'engine') await setupEngine();
   if (!only || only === 'qoder') await setupQoder();
-
-  const configPath = path.join(root, 'gateway', 'config.json');
-  if (!await exists(configPath)) {
-    const example = await readFile(path.join(root, 'gateway', 'config.example.json'), 'utf8');
-    JSON.parse(example);
-    await writeFile(configPath, example, { mode: 0o600 });
-    console.log('[setup] 已从 config.example.json 生成 gateway/config.json，请按需修改凭据');
-  }
   console.log('[setup] 完成。下一步：npm start');
 }
 

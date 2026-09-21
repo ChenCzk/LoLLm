@@ -47,6 +47,9 @@ async function loadGatewayConfig() {
 
 const config = await loadGatewayConfig();
 const engineBaseUrl = new URL(config.engine.baseUrl).origin;
+// engine 的监听地址直接取自 config.json 的 baseUrl（host:port 形式），
+// 避免「配置里写 7863、engine 默认绑别的口」这类两边打架。
+const engineListen = new URL(config.engine.baseUrl).host;
 const publicApiKey = config.gateway.apiKey;
 const engineApiKey = config.engine.apiKey;
 const defaultRealm = config.routing?.defaultRealm || 'cn';
@@ -161,13 +164,20 @@ function officialModels() {
 }
 
 async function channelStatuses() {
-  return Promise.all(officialChannels.map(async channel => ({
-    id: channel.id,
-    type: channel.type,
-    configured: Boolean(await resolveChannelCredential(channel)),
-    models: (channel.models || []).map(model => model.id),
-    routing: channel.routing,
-  })));
+  return Promise.all(officialChannels.map(async channel => {
+    const spec = channelSpawnSpec(channel);
+    return {
+      id: channel.id,
+      type: channel.type,
+      // configured 只表示「凭据有值」。带 spawn 的渠道其 apiKey 是本地约定值，恒为真，
+      // 所以另给一个 running（子进程健康检查）供面板判断，避免显示与实际不符。
+      configured: Boolean(await resolveChannelCredential(channel)),
+      spawned: Boolean(spec),
+      running: spec?.health ? await channelHealthy(spec.health) : null,
+      models: (channel.models || []).map(model => model.id),
+      routing: channel.routing,
+    };
+  }));
 }
 
 function serveConsole(res, pathname) {
@@ -893,7 +903,16 @@ async function startEngine() {
 
   const child = spawn(command, config.engine.args || [], {
     cwd: resolveFromRoot(config.engine.cwd),
-    env: process.env,
+    env: {
+      ...process.env,
+      // engine 在没有 config.local.json 时会自己生成随机 api_key，并按内置默认绑
+      // 0.0.0.0:7863 —— 新克隆出来的机器上，这会让两边端口/密钥对不上，网关直接起不来。
+      // 这两个环境变量会覆盖配置文件（含自动生成的那份），把 config.json 变成唯一真源，
+      // 顺带把 engine 收回到回环地址。
+      WB2A_LISTEN: engineListen,
+      WB2A_API_KEY: engineApiKey,
+      ...(config.engine.env || {}),
+    },
     stdio: 'inherit',
   });
   engineProcess = child;
@@ -916,7 +935,12 @@ async function startEngine() {
     } catch {}
     await new Promise(resolve => setTimeout(resolve, 250));
   }
-  throw new Error('WorkBuddy engine did not become ready');
+  throw new Error(
+    `WorkBuddy engine 未在 ${engineBaseUrl} 就绪。请检查：\n`
+    + `  1) engine 二进制是否匹配当前平台：npm run build:engine\n`
+    + `  2) 端口是否被占用：${engineListen}\n`
+    + '  3) 上面 engine 的启动日志里是否有报错（最常见是账号池目录不可写）',
+  );
 }
 
 async function restartEngine(reason) {

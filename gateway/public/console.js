@@ -140,6 +140,18 @@ function routeChips(model, options = {}) {
     </div>`).join('');
 }
 
+// channel 的状态不能只看「有没有填 apiKey」：Qoder 这种渠道的 apiKey 是本地子进程之间的
+// 约定值，永远非空。真正的判据是**子进程在不在跑**，否则新克隆的机器会看到「凭据就绪」
+// 却每次请求都 fetch failed。
+function channelStateChip(channel) {
+  if (channel.running === true) return '<span class="state-chip ready">运行中</span>';
+  if (channel.running === false) {
+    const hint = channel.configured ? '子进程未运行' : '缺少凭据';
+    return `<span class="state-chip warn">${hint}</span>`;
+  }
+  return `<span class="state-chip ${channel.configured ? 'ready' : 'warn'}">${channel.configured ? '凭据就绪' : '缺少凭据'}</span>`;
+}
+
 function renderStatus(status) {
   const engineBody = isRecord(status.engine?.body) ? status.engine.body : {};
   const bridge = isRecord(status.dshBridge) ? status.dshBridge : {};
@@ -164,7 +176,7 @@ function renderStatus(status) {
 
   const officialChannels = Array.isArray(status.channels) ? status.channels : [];
   elements.channelBody.innerHTML = [
-    `
+  `
       <tr>
         <td>workbuddy2api-panel</td>
         <td><span class="realm-chip">CN</span> <span class="realm-chip">Global</span></td>
@@ -177,11 +189,11 @@ function renderStatus(status) {
     ...officialChannels.map(channel => `
       <tr>
         <td>${escapeHtml(channel.id)}</td>
-        <td><span class="realm-chip">Coding Plan</span></td>
+        <td><span class="realm-chip">${channel.spawned ? '子进程' : 'Coding Plan'}</span></td>
         <td>${channel.models?.length || 0}</td>
         <td>-</td>
         <td>-</td>
-        <td><span class="state-chip ${channel.configured ? 'ready' : 'warn'}">${channel.configured ? '凭据就绪' : '缺少凭据'}</span></td>
+        <td>${channelStateChip(channel)}</td>
       </tr>
     `),
   ].join('');
